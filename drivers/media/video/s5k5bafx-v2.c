@@ -82,13 +82,13 @@ static const struct s5k5bafx_regs reg_datas = {
 				s5k5bafx_recording_50Hz_common),
 		S5K5BAFX_REGSET(ANTI_BANDING_50HZ,
 				s5k5bafx_recording_50Hz_common),
-		S5K5BAFX_REGSET(ANTI_BANDING_60HZ,
-				s5k5bafx_recording_60Hz_common),
+		/** S5K5BAFX_REGSET(ANTI_BANDING_60HZ,
+				s5k5bafx_recording_60Hz_common),*/
 	},
 	.stream_stop = S5K5BAFX_REGSET_TABLE(s5k5bafx_stream_stop),
 #ifdef SUPPORT_FACTORY_TEST
-	.dtp_on = S5K5BAFX_REGSET_TABLE(s5k5bafx_pattern_on),
-	.dtp_off = S5K5BAFX_REGSET_TABLE(s5k5bafx_pattern_off),
+/**	.dtp_on = S5K5BAFX_REGSET_TABLE(s5k5bafx_pattern_on),
+	.dtp_off = S5K5BAFX_REGSET_TABLE(s5k5bafx_pattern_off), */
 #endif
 };
 
