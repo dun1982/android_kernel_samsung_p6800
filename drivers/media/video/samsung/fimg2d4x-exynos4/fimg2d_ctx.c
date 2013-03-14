@@ -130,7 +130,6 @@ static int fimg2d_check_dma_sync(struct fimg2d_bltcmd *cmd)
 	enum pt_status pt;
 	int clip_x, clip_w, clip_h, y, dir, i;
 	unsigned long clip_start;
-	unsigned long modified_addr;
 
 	clp = &p->clipping;
 
@@ -156,13 +155,6 @@ static int fimg2d_check_dma_sync(struct fimg2d_bltcmd *cmd)
 			pt = fimg2d_check_pagetable(mm, c->addr, c->size);
 			if (pt == PT_FAULT)
 				return -1;
-		} else if (img->addr.type == ADDR_USER_CONTIG) {
-			modified_addr = GET_MVA(img->addr.start, img->plane2.start);
-			pt = fimg2d_migrate_pagetable(cmd->ctx->pgd_clone,
-					modified_addr, img->plane2.start, img->height * img->stride);
-			if (pt != PT_NORMAL) {
-				return -1;
-			}
 		}
 
 		if (img->need_cacheopr && i != IMAGE_TMP) {
@@ -183,25 +175,7 @@ static int fimg2d_check_dma_sync(struct fimg2d_bltcmd *cmd)
 			c = &cmd->dma[i];
 			r = &img->rect;
 
-			if (!img->addr.type)
-				continue;
-
-			if ((cmd->image[IMAGE_SRC].addr.type == ADDR_USER_CONTIG) ||
-					(cmd->image[IMAGE_DST].addr.type == ADDR_USER_CONTIG)) {
-				if (img->addr.type == ADDR_USER_CONTIG) {
-					if (i == IMAGE_DST && clp->enable)
-						modified_addr = GET_MVA(img->addr.start, img->plane2.start) +
-								(img->stride * clp->y1);
-					else
-						modified_addr = GET_MVA(img->addr.start, img->plane2.start) +
-								(img->stride * r->y1);
-				} else {
-					modified_addr = c->addr;
-				}
-				fimg2d_clean_inner_pagetable_clone(cmd->ctx->pgd_clone, modified_addr, c->size);
-			}
-
-			if ( !c->cached)
+			if (!img->addr.type || !c->cached)
 				continue;
 
 			if (i == IMAGE_DST)
@@ -252,22 +226,8 @@ static int fimg2d_check_dma_sync(struct fimg2d_bltcmd *cmd)
 				continue;
 
 			/* clean pagetable */
-			if ((cmd->image[IMAGE_SRC].addr.type == ADDR_USER_CONTIG) ||
-					(cmd->image[IMAGE_DST].addr.type == ADDR_USER_CONTIG)) {
-				if (img->addr.type == ADDR_USER_CONTIG) {
-					if (i == IMAGE_DST && clp->enable)
-						modified_addr = GET_MVA(img->addr.start, img->plane2.start) +
-								(img->stride * clp->y1);
-					else
-						modified_addr = GET_MVA(img->addr.start, img->plane2.start) +
-								(img->stride * r->y1);
-				} else {
-					modified_addr = c->addr;
-				}
-				fimg2d_clean_outer_pagetable_clone(cmd->ctx->pgd_clone, modified_addr, c->size);
-			} else {
+			if (img->addr.type == ADDR_USER)
 				fimg2d_clean_outer_pagetable(mm, c->addr, c->size);
-			}
 
 			if (!c->cached)
 				continue;
@@ -315,17 +275,14 @@ int fimg2d_add_command(struct fimg2d_control *info, struct fimg2d_context *ctx,
 	int i, ret;
 	struct fimg2d_image *buf[MAX_IMAGES] = image_table(blit);
 	struct fimg2d_bltcmd *cmd;
-	struct fimg2d_image *img;
 
-	if ((blit->dst) && (type == ADDR_USER)
-			&& (blit->seq_no == SEQ_NO_BLT_SKIA))
+	if ((blit->dst) && (type == ADDR_USER))
 		up_write(&page_alloc_slow_rwsem);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 
 	if (!cmd) {
-		if ((blit->dst) && (type == ADDR_USER)
-				&& (blit->seq_no == SEQ_NO_BLT_SKIA))
+		if ((blit->dst) && (type == ADDR_USER))
 			if (!down_write_trylock(&page_alloc_slow_rwsem))
 				return -EAGAIN;
 		return -ENOMEM;
@@ -337,8 +294,7 @@ int fimg2d_add_command(struct fimg2d_control *info, struct fimg2d_context *ctx,
 
 		if (copy_from_user(&cmd->image[i], buf[i],
 					sizeof(struct fimg2d_image))) {
-			if ((blit->dst) && (type == ADDR_USER)
-					&& (blit->seq_no == SEQ_NO_BLT_SKIA))
+			if ((blit->dst) && (type == ADDR_USER))
 				if (!down_write_trylock(&page_alloc_slow_rwsem)) {
 					ret = -EAGAIN;
 					goto err_user;
@@ -348,8 +304,7 @@ int fimg2d_add_command(struct fimg2d_control *info, struct fimg2d_context *ctx,
 		}
 	}
 
-	if ((blit->dst) && (type == ADDR_USER)
-			&& (blit->seq_no == SEQ_NO_BLT_SKIA))
+	if ((blit->dst) && (type == ADDR_USER))
 		if (!down_write_trylock(&page_alloc_slow_rwsem)) {
 			ret = -EAGAIN;
 			goto err_user;
@@ -373,13 +328,6 @@ int fimg2d_add_command(struct fimg2d_control *info, struct fimg2d_context *ctx,
 	}
 
 	fimg2d_fixup_params(cmd);
-
-	for (i = 0; i < MAX_IMAGES; i++) {
-		img = &cmd->image[i];
-		if (img->addr.type == ADDR_USER_CONTIG) {
-			memcpy(cmd->ctx->pgd_clone, cmd->ctx->mm->pgd, L1_DESCRIPTOR_SIZE);
-		}
-	}
 
 	if (fimg2d_check_dma_sync(cmd)) {
 		ret = -EFAULT;

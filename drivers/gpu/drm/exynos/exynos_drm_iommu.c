@@ -37,13 +37,13 @@
 static DEFINE_MUTEX(iommu_mutex);
 
 struct exynos_iommu_ops {
-	void *(*setup)(unsigned long s_iova, unsigned long size);
-	void (*cleanup)(void *in_vmm);
-	int (*activate)(void *in_vmm, struct device *dev);
-	void (*deactivate)(void *in_vmm, struct device *dev);
-	dma_addr_t (*map)(void *in_vmm, struct scatterlist *sg,
+	int (*setup)(struct device *dev);
+	void (*cleanup)(struct device *dev);
+	int (*activate)(struct device *dev);
+	void (*deactivate)(struct device *dev);
+	dma_addr_t (*map)(struct device *dev, struct scatterlist *sg,
 				off_t offset, size_t size);
-	void (*unmap)(void *in_vmm, dma_addr_t iova);
+	void (*unmap)(struct device *dev, dma_addr_t iova);
 };
 
 static const struct exynos_iommu_ops iommu_ops = {
@@ -54,21 +54,51 @@ static const struct exynos_iommu_ops iommu_ops = {
 	.map		= iovmm_map,
 	.unmap		= iovmm_unmap
 };
-
-dma_addr_t exynos_drm_iommu_map_gem(struct drm_device *drm_dev,
-					struct drm_gem_object *obj)
+bool is_iommu_gem_already_mapped(struct list_head *iommu_list,
+					void *gem_obj,
+					dma_addr_t *dma_addr)
 {
-	struct exynos_drm_gem_obj *exynos_gem_obj;
-	struct exynos_drm_gem_buf *buf;
+	struct iommu_info_node *im;
+
+	list_for_each_entry(im, iommu_list, list) {
+		if (im->gem_obj == gem_obj) {
+			*dma_addr = im->dma_addr;
+			return true;
+		}
+	}
+
+	*dma_addr = 0;
+	return false;
+}
+
+dma_addr_t exynos_drm_iommu_map_gem(struct exynos_drm_subdrv *subdrv,
+				struct drm_file *filp,
+				struct list_head *iommu_list,
+				struct exynos_iommu_gem_data *gem_data)
+{
 	struct sg_table *sgt;
-	dma_addr_t dev_addr;
+	struct iommu_info_node *node;
+	struct exynos_drm_gem_obj *obj;
+	dma_addr_t dma_addr;
 
 	mutex_lock(&iommu_mutex);
 
-	exynos_gem_obj = to_exynos_gem_obj(obj);
+	/* get gem object from specific gem framework. */
+	obj = exynos_drm_gem_get_obj(subdrv->drm_dev,
+					gem_data->gem_handle_in, filp);
+	if (IS_ERR(obj)) {
+		mutex_unlock(&iommu_mutex);
+		return 0;
+	}
 
-	buf = exynos_gem_obj->buffer;
-	sgt = buf->sgt;
+	/* check if already mapped. */
+	if (is_iommu_gem_already_mapped(iommu_list, obj,
+					&dma_addr) == true) {
+		mutex_unlock(&iommu_mutex);
+		return dma_addr;
+	}
+
+	sgt = obj->buffer->sgt;
 
 	/*
 	 * if not using iommu, just return base address to physical
@@ -80,62 +110,66 @@ dma_addr_t exynos_drm_iommu_map_gem(struct drm_device *drm_dev,
 	}
 
 	/*
-	 * if a gem buffer was already mapped with iommu table then
-	 * just return dev_addr;
-	 *
-	 * Note: device address is unique to system globally.
-	 */
-	if (buf->dev_addr) {
-		mutex_unlock(&iommu_mutex);
-		return buf->dev_addr;
-	}
-
-	/*
 	 * allocate device address space for this driver and then
 	 * map all pages contained in sg list to iommu table.
 	 */
-	dev_addr = iommu_ops.map(exynos_gem_obj->vmm, sgt->sgl, (off_t)0,
+	dma_addr = iommu_ops.map(subdrv->dev, sgt->sgl, (off_t)0,
 					(size_t)obj->size);
-	if (!dev_addr) {
+	if (!dma_addr) {
 		mutex_unlock(&iommu_mutex);
-		return dev_addr;
+		return dma_addr;
 	}
 
+	/*
+	 * this gem object is referenced by this driver so
+	 * the object refcount should be increased.
+	 */
+	drm_gem_object_reference(&obj->base);
+
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
+	if (!node) {
+		DRM_ERROR("failed to allocate iommu node.\n");
+		dma_addr = 0;
+		goto err;
+	}
+
+	node->gem_obj = obj;
+	gem_data->gem_obj_out = obj;
+	node->dma_addr = dma_addr;
 	mutex_unlock(&iommu_mutex);
 
-	return dev_addr;
+	list_add_tail(&node->list, iommu_list);
+
+	return dma_addr;
+err:
+	mutex_unlock(&iommu_mutex);
+	iommu_ops.unmap(subdrv->dev, dma_addr);
+	return dma_addr;
 }
 
-void exynos_drm_iommu_unmap_gem(struct drm_gem_object *obj)
+void exynos_drm_iommu_unmap_gem(struct exynos_drm_subdrv *subdrv,
+				struct drm_file *filp,
+				void  *obj, dma_addr_t dma_addr)
 {
-	struct exynos_drm_gem_obj *exynos_gem_obj;
-	struct exynos_drm_gem_buf *buf;
+	struct exynos_drm_gem_obj *gem_obj;
 
-	if (!iommu_ops.unmap || !obj)
+	if (!iommu_ops.unmap || !dma_addr || !obj)
 		return;
 
-	exynos_gem_obj = to_exynos_gem_obj(obj);
-	buf = exynos_gem_obj->buffer;
-
-	/* workaround */
-	usleep_range(15000, 20000);
+	gem_obj = obj;
 
 	mutex_lock(&iommu_mutex);
-
-	if (!buf->dev_addr) {
-		mutex_unlock(&iommu_mutex);
-		DRM_DEBUG_KMS("not mapped with iommu table.\n");
-		return;
-	}
-
-	if (exynos_gem_obj->vmm)
-		iommu_ops.unmap(exynos_gem_obj->vmm, buf->dev_addr);
-
-	buf->dev_addr = 0;
+	iommu_ops.unmap(subdrv->dev, dma_addr);
 	mutex_unlock(&iommu_mutex);
+
+	/*
+	 * drop this gem object refcount to release allocated buffer
+	 * and resources.
+	 */
+	drm_gem_object_unreference_unlocked(&gem_obj->base);
 }
 
-dma_addr_t exynos_drm_iommu_map(void *in_vmm, dma_addr_t paddr,
+dma_addr_t exynos_drm_iommu_map(struct device *dev, dma_addr_t paddr,
 				size_t size)
 {
 	struct sg_table *sgt;
@@ -152,13 +186,13 @@ dma_addr_t exynos_drm_iommu_map(void *in_vmm, dma_addr_t paddr,
 
 	sgt = kzalloc(sizeof(struct sg_table) * npages, GFP_KERNEL);
 	if (!sgt) {
-		DRM_ERROR("failed to allocate sg table.\n");
+		dev_err(dev, "failed to allocate sg table.\n");
 		return dma_addr;
 	}
 
 	ret = sg_alloc_table(sgt, npages, GFP_KERNEL);
 	if (ret < 0) {
-		DRM_ERROR("failed to initialize sg table.\n");
+		dev_err(dev, "failed to initialize sg table.\n");
 		goto err;
 	}
 
@@ -178,9 +212,9 @@ dma_addr_t exynos_drm_iommu_map(void *in_vmm, dma_addr_t paddr,
 	 * allocate device address space for this driver and then
 	 * map all pages contained in sg list to iommu table.
 	 */
-	dma_addr = iommu_ops.map(in_vmm, sgt->sgl, (off_t)0, (size_t)size);
+	dma_addr = iommu_ops.map(dev, sgt->sgl, (off_t)0, (size_t)size);
 	if (!dma_addr)
-		DRM_ERROR("failed to map cmdlist pool.\n");
+		dev_err(dev, "failed to map cmdlist pool.\n");
 
 	sg_free_table(sgt);
 err:
@@ -191,45 +225,45 @@ err:
 }
 
 
-void exynos_drm_iommu_unmap(void *in_vmm, dma_addr_t dma_addr)
+void exynos_drm_iommu_unmap(struct device *dev, dma_addr_t dma_addr)
 {
 	if (iommu_ops.unmap)
-		iommu_ops.unmap(in_vmm, dma_addr);
+		iommu_ops.unmap(dev, dma_addr);
 }
 
-void *exynos_drm_iommu_setup(unsigned long s_iova, unsigned long size)
+int exynos_drm_iommu_setup(struct device *dev)
 {
 	/*
 	 * allocate device address space to this driver and add vmm object
 	 * to s5p_iovmm_list. please know that each iommu will use
 	 * 1GB as its own device address apace.
 	 *
-	 * the device address space : s_iova ~ s_iova + size
+	 * the device address space : 0x80000000 ~ 0xA0000000
 	 */
 	if (iommu_ops.setup)
-		return iommu_ops.setup(s_iova, size);
-
-	return ERR_PTR(-EINVAL);
-}
-
-int exynos_drm_iommu_activate(void *in_vmm, struct device *dev)
-{
-	if (iommu_ops.activate)
-		return iovmm_activate(in_vmm, dev);
+		return iommu_ops.setup(dev);
 
 	return 0;
 }
 
-void exynos_drm_iommu_deactivate(void *in_vmm, struct device *dev)
+int exynos_drm_iommu_activate(struct device *dev)
 {
-	if (iommu_ops.deactivate)
-		iommu_ops.deactivate(in_vmm, dev);
+	if (iommu_ops.activate)
+		return iovmm_activate(dev);
+
+	return 0;
 }
 
-void exynos_drm_iommu_cleanup(void *in_vmm)
+void exynos_drm_iommu_deactivate(struct device *dev)
+{
+	if (iommu_ops.deactivate)
+		iommu_ops.deactivate(dev);
+}
+
+void exynos_drm_iommu_cleanup(struct device *dev)
 {
 	if (iommu_ops.cleanup)
-		iommu_ops.cleanup(in_vmm);
+		iommu_ops.cleanup(dev);
 }
 
 MODULE_AUTHOR("Inki Dae <inki.dae@samsung.com>");

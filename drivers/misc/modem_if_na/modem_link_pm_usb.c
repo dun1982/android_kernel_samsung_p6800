@@ -231,8 +231,16 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 			mif_info("blocked autosuspend by `%s(%d)'\n",
 				get_task_comm(taskname, task), task->pid);
 			pm_data->block_autosuspend = true;
-			if (usb_ld->usbdev)
-				pm_runtime_forbid(&usb_ld->usbdev->dev);
+			if(!p8lte_ehci_hcd_died)
+			{
+				if (usb_ld->usbdev)
+					pm_runtime_forbid(&usb_ld->usbdev->dev);
+				else {
+					mif_err("Enable autosuspend failed\n");
+					err = -ENODEV;
+				}
+			}
+			reset_p8lte_s5p_ehci();
 		break;
 	case IOCTL_LINK_ENABLE_AUTOSUSPEND: /* Enable autosuspend */
 			mif_info("autosuspend enabled by `%s(%d)'\n",

@@ -130,7 +130,6 @@ static int gpio_extcon_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto err_request_irq;
 
-	platform_set_drvdata(pdev, extcon_data);
 	/* Perform initial detection */
 	gpio_extcon_work(&extcon_data->work.work);
 
@@ -153,7 +152,6 @@ static int gpio_extcon_remove(struct platform_device *pdev)
 	struct gpio_extcon_data *extcon_data = platform_get_drvdata(pdev);
 
 	cancel_delayed_work_sync(&extcon_data->work);
-	free_irq(extcon_data->irq, extcon_data);
 	gpio_free(extcon_data->gpio);
 	extcon_dev_unregister(&extcon_data->edev);
 	devm_kfree(&pdev->dev, extcon_data);
@@ -161,7 +159,7 @@ static int gpio_extcon_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_driver gpio_extcon_driver = {
+static struct platform_driver gpio_extcon = {
 	.probe		= gpio_extcon_probe,
 	.remove		= gpio_extcon_remove,
 	.driver		= {
@@ -170,7 +168,7 @@ static struct platform_driver gpio_extcon_driver = {
 	},
 };
 
-module_platform_driver(gpio_extcon_driver);
+module_platform_driver(gpio_extcon);
 
 MODULE_AUTHOR("Mike Lockwood <lockwood@android.com>");
 MODULE_DESCRIPTION("GPIO extcon driver");

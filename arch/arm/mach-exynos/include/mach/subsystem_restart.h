@@ -39,7 +39,6 @@ struct subsys_data {
 
 	struct mutex shutdown_lock;
 	struct mutex powerup_lock;
-	bool ongoing;
 
 	void *restart_order;
 	struct subsys_data *single_restart_list[1];

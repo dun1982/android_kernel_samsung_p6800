@@ -98,8 +98,4 @@
 #endif
 #endif
 
-#ifdef CONFIG_SLP
-#define MFC_NUM_PLANE 2
-#endif
-
 #endif /* __MFC_H_ */

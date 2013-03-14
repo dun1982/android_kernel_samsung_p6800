@@ -41,19 +41,10 @@
 #define SAMSUNG_MFC_DEV_NAME           "/dev/s3c-mfc"
 
 #if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
-#define SUPPORT_SLICE_ENCODING        0 // originaly 1, but we're missing matching userspace
+#define SUPPORT_SLICE_ENCODING        1
 #else
 #define SUPPORT_SLICE_ENCODING        0
 #endif
-
-/*---------------------------*/
-/* Memory Type               */
-/*---------------------------*/
-typedef enum {
-	MEMORY_PHY_ADDR = 0,
-	MEMORY_USRPTR = 1,
-	MEMORY_DMABUF = 2,
-} SSBSIP_MFC_MEMORY_TYPE;
 
 /*--------------------------------------------------------------------------------*/
 /* Structure and Type                                                             */
@@ -136,7 +127,6 @@ typedef enum {
     /* C210 specific feature */
     MFC_ENC_SETCONF_VUI_INFO,
     MFC_ENC_SETCONF_I_PERIOD,
-    MFC_ENC_SETCONF_SPS_PPS_GEN,
     MFC_ENC_SETCONF_HIER_P,
 
     MFC_ENC_SETCONF_SEI_GEN,
@@ -149,12 +139,7 @@ typedef enum {
     MFC_GETOUTBUF_DISPLAY_DECODING,
     MFC_GETOUTBUF_DISPLAY_ONLY,
     MFC_GETOUTBUF_DISPLAY_END,
-#ifndef CONFIG_SLP
-	MFC_GETOUTBUF_CHANGE_RESOL
-#else
-	MFC_GETOUTBUF_CHANGING_RESOL,
-	MFC_GETOUTBUF_CHANGE_RESOL_DONE
-#endif
+    MFC_GETOUTBUF_CHANGE_RESOL
 } SSBSIP_MFC_DEC_OUTBUF_STATUS;
 
 typedef enum {

@@ -57,23 +57,20 @@ static struct device_attribute factory_attrs[] = {
 	FACTORY_ATTR(test_mode),
 	FACTORY_ATTR(batt_error_test),
 	FACTORY_ATTR(siop_activated),
-	FACTORY_ATTR(siop_level),
 	FACTORY_ATTR(wc_status),
 	FACTORY_ATTR(wpc_pin_state),
 	FACTORY_ATTR(factory_mode),
 	FACTORY_ATTR(update),
-	FACTORY_ATTR(batt_slate_mode),
-	FACTORY_ATTR(batt_vf_adc),
 
 	/* not use */
 	FACTORY_ATTR(batt_vol_adc),
 	FACTORY_ATTR(batt_vol_adc_cal),
 	FACTORY_ATTR(batt_vol_adc_aver),
 	FACTORY_ATTR(batt_temp_adc_cal),
+	FACTORY_ATTR(batt_vf_adc),
 	FACTORY_ATTR(auth_battery),
 
-#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)\
-	|| defined(CONFIG_MACH_T0_CHN_CTC)
+#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)
 	FACTORY_ATTR(batt_temp_adc_spec),
 	FACTORY_ATTR(batt_sysrev),
 #endif
@@ -94,23 +91,20 @@ enum {
 	TEST_MODE,
 	BATT_ERROR_TEST,
 	SIOP_ACTIVATED,
-	SIOP_LEVEL,
 	WC_STATUS,
 	WPC_PIN_STATE,
 	FACTORY_MODE,
 	UPDATE,
-	BATT_SLATE_MODE,
-	BATT_VF_ADC,
 
 	/* not use */
 	BATT_VOL_ADC,
 	BATT_VOL_ADC_CAL,
 	BATT_VOL_ADC_AVER,
 	BATT_TEMP_ADC_CAL,
+	BATT_VF_ADC,
 	AUTH_BATTERY,
 
-#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)\
-	|| defined(CONFIG_MACH_T0_CHN_CTC)
+#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)
 	BATT_TEMP_ADC_SPEC,
 	BATT_SYSREV,
 #endif
@@ -135,8 +129,8 @@ static ssize_t factory_show_property(struct device *dev,
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_READ_ADJ_SOC:
-		val = info->battery_soc =
-			battery_get_info(info, POWER_SUPPLY_PROP_CAPACITY);
+		battery_get_info(info, POWER_SUPPLY_PROP_CAPACITY);
+		val = info->battery_soc;
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_TYPE:
@@ -200,8 +194,8 @@ static ssize_t factory_show_property(struct device *dev,
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_CHARGING_SOURCE:
-		val = info->cable_type =
-			battery_get_info(info, POWER_SUPPLY_PROP_ONLINE);
+		battery_get_info(info, POWER_SUPPLY_PROP_ONLINE);
+		val = info->cable_type;
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case TEST_MODE:
@@ -217,10 +211,6 @@ static ssize_t factory_show_property(struct device *dev,
 		val = info->siop_state;
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
-	case SIOP_LEVEL:
-		val = info->siop_lv;
-		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
-		break;
 	case WC_STATUS:
 	case WPC_PIN_STATE:
 #ifdef CONFIG_BATTERY_WPC_CHARGER
@@ -234,24 +224,15 @@ static ssize_t factory_show_property(struct device *dev,
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
 						info->factory_mode);
 		break;
-	case BATT_SLATE_MODE:
-		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
-						info->slate_mode);
-		break;
-	case BATT_VF_ADC:
-		battery_get_info(info, POWER_SUPPLY_PROP_PRESENT);
-		val = info->battery_vf_adc;
-		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
-		break;
 	case BATT_VOL_ADC:
 	case BATT_VOL_ADC_CAL:
 	case BATT_VOL_ADC_AVER:
 	case BATT_TEMP_ADC_CAL:
+	case BATT_VF_ADC:
 	case AUTH_BATTERY:
 		i += scnprintf(buf + i, PAGE_SIZE - i, "N/A\n");
 		break;
-#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)\
-	|| defined(CONFIG_MACH_T0_CHN_CTC)
+#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)
 	case BATT_SYSREV:
 		val = system_rev;
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
@@ -292,9 +273,6 @@ static ssize_t factory_store_property(struct device *dev,
 				battery_control_info(info,
 						POWER_SUPPLY_PROP_CAPACITY,
 						1);
-				info->battery_soc =
-						battery_get_info(info,
-						POWER_SUPPLY_PROP_CAPACITY);
 			} else
 				pr_info("%s: Not supported param.\n", __func__);
 			ret = count;
@@ -319,16 +297,14 @@ static ssize_t factory_store_property(struct device *dev,
 	case SIOP_ACTIVATED:
 		if (sscanf(buf, "%d\n", &x) == 1) {
 			info->siop_state = x;
+
+			if (info->siop_state == SIOP_ACTIVE)
+				info->siop_charge_current =
+					info->pdata->chg_curr_usb;
+
 			pr_info("%s: SIOP %s\n", __func__,
 				(info->siop_state ?
 				"activated" : "deactivated"));
-			ret = count;
-		}
-		break;
-	case SIOP_LEVEL:
-		if (sscanf(buf, "%d\n", &x) == 1) {
-			info->siop_lv = x;
-			pr_info("%s: SIOP level %d\n", __func__, info->siop_lv);
 			ret = count;
 		}
 		break;
@@ -347,18 +323,6 @@ static ssize_t factory_store_property(struct device *dev,
 	case UPDATE:
 		pr_info("%s: battery update\n", __func__);
 		ret = count;
-		break;
-	case BATT_SLATE_MODE:
-		if (sscanf(buf, "%d\n", &x) == 1) {
-			if (x)
-				info->slate_mode = 1;
-			else
-				info->slate_mode = 0;
-
-			pr_info("%s: slate_mode %s\n", __func__,
-				(info->slate_mode ? "set" : "clear"));
-			ret = count;
-		}
 		break;
 	default:
 		ret = -EINVAL;
@@ -522,7 +486,7 @@ int battery_info_proc(char *buf, char **start,
 		info->charge_start_time);
 	return len;
 }
-#elif defined(CONFIG_MACH_M0_CTC) || defined(CONFIG_MACH_T0_CHN_CTC)
+#elif defined(CONFIG_MACH_M0_CTC)
 int battery_info_proc(char *buf, char **start,
 			off_t offset, int count, int *eof, void *data)
 {

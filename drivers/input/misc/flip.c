@@ -43,9 +43,13 @@
 #include <linux/input.h>
 #include <linux/workqueue.h>
 #include <linux/irqdesc.h>
+
+
 #include <linux/wakelock.h>
 
-#define REPORT_KEY		0
+/////////////////////////////////////////////////////////////////////
+//#define PM8058_IRQ_BASE				(NR_MSM_IRQS + NR_GPIO_IRQS)
+//#define FLIP_DET_PIN		36
 #define FLIP_NOTINIT		-1
 #define FLIP_OPEN			1
 #define FLIP_CLOSE		0	
@@ -54,9 +58,9 @@
 #define FLIP_STABLE_COUNT	(1)
 #define GPIO_FLIP  GPIO_HALL_SW
 
-extern struct class *sec_class;
+#define __TSP_DEBUG 1
 
-#if 0 /* DEBUG */
+#if 1 // DEBUG
 #define dbg_printk(fmt, ...) \
 	printk(KERN_DEBUG pr_fmt(fmt), ##__VA_ARGS__)
 #else
@@ -66,34 +70,39 @@ extern struct class *sec_class;
 
 /////////////////////////////////////////////////////////////////////
 struct sec_flip_pdata {
-	int wakeup;
-	int debounce_interval;
-	unsigned int rep:1;		/* enable input subsystem auto repeat */
+	int wakeup; 
 }; 
 
 struct sec_flip {
 	struct input_dev *input;
+	struct sec_flip_pdata *pdata;
+	//spinlock_t lock;
 	struct wake_lock wlock; 
+
 	struct workqueue_struct *wq;	/* The actuak work queue */
 	struct work_struct flip_id_det;	/* The work being queued */
+
 	struct timer_list flip_timer;
-	struct device *sec_flip;
-	int		timer_debounce;
-	int		gpio;
+
+	int			gpio; 
 	int    		irq;
 };
 
 
 /////////////////////////////////////////////////////////////////////
-#ifdef CONFIG_S5P_DSIM_SWITCHABLE_DUAL_LCD
-extern void s3cfb_switch_dual_lcd(int lcd_sel);
+extern void samsung_switching_lcd_suspend(int init, int flip);
+extern void samsung_switching_lcd_resume(int init, int flip);
+extern void samsung_switching_tsp(int init, int flip);
+extern void samsung_switching_tkey(int init, int flip);
+extern void samsung_switching_tsp_pre(int init, int flip);
+#ifdef CONFIG_BATTERY_SEC
+extern unsigned int is_lpcharging_state(void);
 #endif
-extern void samsung_switching_tsp(int flip);
-extern void samsung_switching_tkey(int flip);
-/////////////////////////////////////////////////////////////////////
 
-static int flip_status;
-static int flip_status_before;
+
+/////////////////////////////////////////////////////////////////////
+static int flip_status=FLIP_NOTINIT;  // first state
+//struct timer_list flip_timer;
 
 /* 0 : open, 1: close */
 int Is_folder_state(void)
@@ -103,74 +112,100 @@ int Is_folder_state(void)
 }
 EXPORT_SYMBOL(Is_folder_state);
 
-
-static void sec_report_flip_key(struct sec_flip *flip)
+int Is_folder_state_sensor(void)
 {
-#if REPORT_KEY
-	if (flip_status) {
-		input_report_key(flip->input, KEY_FOLDER_OPEN, 1);
-		input_report_key(flip->input, KEY_FOLDER_OPEN, 0);
-		input_sync(flip->input);
-		dbg_printk("[FLIP] %s: input flip key :  open\n", __FUNCTION__);
-	} else {
-		input_report_key(flip->input, KEY_FOLDER_CLOSE, 1);
-		input_report_key(flip->input, KEY_FOLDER_CLOSE, 0);
-		input_sync(flip->input);
-		dbg_printk ("[FLIP] %s: input flip key : close\n", __FUNCTION__);
-	}
-#else
-	if (flip_status) {
-		input_report_switch(flip->input, SW_LID, 0);
-		input_sync(flip->input);
-		dbg_printk("[FLIP] %s: input flip key :  open\n", __FUNCTION__);
-	} else {
-		input_report_switch(flip->input, SW_LID, 1);
-		input_sync(flip->input);
-		dbg_printk ("[FLIP] %s: input flip key : close\n", __FUNCTION__);
-	}
-#endif
+	return !flip_status;
 }
+EXPORT_SYMBOL(Is_folder_state_sensor);
 
-static void set_flip_status(struct sec_flip *flip)
-{
-	int val = 0;
+struct switch_dev switch_flip = {
+		.name = "flip",
+};
 
-	val = gpio_get_value_cansleep(flip->gpio);
-	dbg_printk("%s, val:%d, flip_status:%d\n", __FUNCTION__, val, flip_status);
-	if (flip_status != val) {
-		flip_status_before = flip_status;
-		flip_status = val ? FLIP_OPEN : FLIP_CLOSE;
-	}
-
-}
+/////////////////////////////////////////////////////////////////////
+//	spin_lock_irqsave(&flip->lock, flags);
+//	spin_unlock_irqrestore(&flip->lock, flags);
 
 static void sec_flip_work_func(struct work_struct *work)
 {
+	int init = 0;
 	struct sec_flip* flip = container_of( work, struct sec_flip, flip_id_det); 
 
 	//enable_irq(flip->irq);
 
-	set_flip_status(flip);
-	printk("%s: %s, before:%d \n", __func__, (flip_status) ? "OPEN 1" : "CLOSE 0", flip_status_before);
+	printk("%s: %s\n", __func__, (flip_status) ? "OPEN":"CLOSE" ); 
 
-	sec_report_flip_key(flip);
-
-	if (flip_status != flip_status_before) {
-#ifdef CONFIG_S5P_DSIM_SWITCHABLE_DUAL_LCD
-		s3cfb_switch_dual_lcd(!flip_status);
-#endif
-		samsung_switching_tsp(flip_status);
-		samsung_switching_tkey(flip_status);
+	if ( flip_status==FLIP_NOTINIT) {
+		flip_status = gpio_get_value_cansleep( flip->gpio );
+		init = 1; 		
 	}
+
+//	switch_set_state(&switch_flip, !flip_status);
+	
+//################ first  #################
+	// if flip status was changed and lcd is on, switch device. 
+#ifdef CONFIG_BATTERY_SEC
+		if ( !is_lpcharging_state() )
+#endif
+		{
+			if ( flip_status ){ 
+				#ifdef __TSP_DEBUG
+				printk ("[FLIP] flip_status- open\n");
+				#endif
+				samsung_switching_tkey(init, flip_status);
+				//lp8720_set_folder_open();
+			}
+			else {
+				#ifdef __TSP_DEBUG
+				printk ("[FLIP] flip_status- open\n");
+				#endif
+				//lp8720_set_folder_close();
+				samsung_switching_tkey(init, flip_status);
+			}
+		}
+
+		samsung_switching_lcd_suspend(init, flip_status);
+		gpio_set_value(GPIO_LCD_SEL, !flip_status);
+		samsung_switching_lcd_resume(init, flip_status);
+	
+//################ send event  #################
+
+	if( flip_status )	{
+		input_report_key(flip->input, KEY_FOLDER_OPEN, 1);
+		input_report_key(flip->input, KEY_FOLDER_OPEN, 0);
+		input_sync(flip->input);
+		#ifdef __TSP_DEBUG
+		printk("[FLIP] %s: input flip key :  open\n", __FUNCTION__);
+		#endif
+	} else	{
+		input_report_key(flip->input, KEY_FOLDER_CLOSE, 1);
+		input_report_key(flip->input, KEY_FOLDER_CLOSE, 0);
+		input_sync(flip->input);
+		#ifdef __TSP_DEBUG
+		printk ("[FLIP] %s: input flip key : close\n", __FUNCTION__);
+		#endif
+
+	}	
+
+//################ second  #################
+
+#ifdef CONFIG_BATTERY_SEC
+		if ( !is_lpcharging_state() )
+#endif
+		{
+			samsung_switching_tsp(init, flip_status);
+//			if (!flip_status){
+//				lp8720_set_folder_close();
+//				samsung_switching_tkey(init, flip_status);		// after close
+//			}
+		}
 }
 
 static irqreturn_t sec_flip_irq_handler(int irq, void *_flip)
 {
 	struct sec_flip *flip = _flip;
+	int val = 0;
 
-	dbg_printk("%s\n", __FUNCTION__);
-
-/*
 	val = gpio_get_value_cansleep(flip->gpio);  
 
 	if(val){		// OPEN
@@ -182,35 +217,76 @@ static irqreturn_t sec_flip_irq_handler(int irq, void *_flip)
 	printk("[FLIP] %s: val=%d (1:open, 0:close)\n", __func__, val);
 
 	wake_lock_timeout(&flip->wlock, 1 * HZ);
-*/
-	if (flip->timer_debounce)
-		mod_timer(&flip->flip_timer,
-			jiffies + msecs_to_jiffies(flip->timer_debounce));
-	else
+#if 0 // it has timer
+	//disable_irq_nosync(flip->irq);
+dbg_printk("jgb 1111\n"); 
+//	if ( flip->irq != -1 ) 
+	{
+dbg_printk("jgb 222\n"); 
+		if (!timer_pending(&flip->flip_timer)) {
+dbg_printk("jgb 333\n"); 
+			//wake_lock(&flip->wlock);
+			mod_timer(&flip->flip_timer, jiffies + msecs_to_jiffies(FLIP_SCAN_INTERVAL));
+		}
+	}
+#else // do not have timer, report right now
 		queue_work(flip->wq, &flip->flip_id_det );
-
+#endif
 	return IRQ_HANDLED;
 }
 
 
 void sec_flip_timer(unsigned long data)
 {
+	int val = 0; 
 	struct sec_flip* flip = (struct sec_flip*)data; 
+	static int wait_flip_count = 0;
+	static int wait_flip_status = 0;
 
-	dbg_printk("%s\n", __FUNCTION__);
-	queue_work(flip->wq, &flip->flip_id_det);
+	printk("%s: %s\n", __func__, (flip_status) ? "OPEN":"CLOSE" ); 
+
+	if ( flip_status==FLIP_NOTINIT) {
+		queue_work(flip->wq, &flip->flip_id_det ); 
+		return ; 
+	}
+
+	val = gpio_get_value_cansleep( flip->gpio );  
+
+	if (val != wait_flip_status) {
+		wait_flip_count = 0;
+		wait_flip_status = val;
+		printk("%s: flip changed (%s)\n", __func__, (val) ? "OPEN":"CLOSE"); 
+	} else if (wait_flip_count < FLIP_STABLE_COUNT) {
+		wait_flip_count++;
+		printk("%s: flip count:%d (%s)\n", __func__, wait_flip_count, (val) ? "OPEN":"CLOSE"); 
+	}
+	
+	if (wait_flip_count >= FLIP_STABLE_COUNT) {
+		if(val){		// OPEN
+			flip_status = 1;		
+		} 
+		else{			// CLOSE
+			flip_status = 0;
+		}
+		
+		queue_work(flip->wq, &flip->flip_id_det );
+
+	} 
+	else {
+		mod_timer(&flip->flip_timer, jiffies + msecs_to_jiffies(FLIP_SCAN_INTERVAL));
+	}
+
 }
 
-#if 1 /*CONFIG_PM*/
+#if 0// CONFIG_PM
 static int sec_flip_suspend(struct device *dev)
 {
 	struct sec_flip *flip = dev_get_drvdata(dev);
 
-	dbg_printk(KERN_INFO "[FLIP]%s:\n", __func__);
+	printk("%s:\n", __func__); 
 
 	if (device_may_wakeup(dev)) {
 		enable_irq_wake(flip->irq);
-		printk(KERN_INFO "[FLIP]%s: enable_irq_wake\n", __func__);
 	}
 
 	return 0;
@@ -220,11 +296,10 @@ static int sec_flip_resume(struct device *dev)
 {
 	struct sec_flip *flip = dev_get_drvdata(dev);
 
-	dbg_printk("[FLIP]%s:\n", __func__);
+	printk("%s:\n", __func__); 
 
 	if (device_may_wakeup(dev)) {
 		disable_irq_wake(flip->irq);
-		printk(KERN_INFO "[FLIP]%s: disable_irq_wake\n", __func__);
 	}
 
 	return 0;
@@ -236,6 +311,8 @@ static struct dev_pm_ops pm8058_flip_pm_ops = {
 };
 #endif
 
+/*zjh added flip state check file*/
+#if 1 //zjh
 static ssize_t status_check(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	printk("flip status check :  %d\n", flip_status);
@@ -243,6 +320,7 @@ static ssize_t status_check(struct device *dev, struct device_attribute *attr, c
 }
 
 static DEVICE_ATTR(flipStatus, S_IRUGO | S_IWUSR | S_IWGRP , status_check, NULL);
+#endif
 
 static int __devinit sec_flip_probe(struct platform_device *pdev)
 {
@@ -262,6 +340,14 @@ static int __devinit sec_flip_probe(struct platform_device *pdev)
 	if (!flip)
 		return -ENOMEM;
 
+	flip->pdata   = pdata;
+
+	/* Enable runtime PM ops, start in ACTIVE mode */
+//	err = pm_runtime_set_active(&pdev->dev);
+//	if (err < 0)
+//		dev_err(&pdev->dev, "unable to set runtime pm state\n");
+//	pm_runtime_enable(&pdev->dev);
+
 /* INPUT DEVICE */
 	input = input_allocate_device();
 	if (!input) {
@@ -270,17 +356,12 @@ static int __devinit sec_flip_probe(struct platform_device *pdev)
 		goto free_flip;
 	}
 
-	if (pdata->rep)
-		__set_bit(EV_REP, input->evbit);
-
-#if REPORT_KEY
-	input_set_capability(input, EV_KEY, KEY_FOLDER_OPEN);
-	input_set_capability(input, EV_KEY, KEY_FOLDER_CLOSE);
-#else
-	input_set_capability(input, EV_SW, SW_LID);
-#endif
+	//input_set_capability(input, EV_KEY, KEY_POWER);
+	set_bit(EV_KEY, input->evbit);
+	set_bit(KEY_FOLDER_OPEN & KEY_MAX, input->keybit);
+	set_bit(KEY_FOLDER_CLOSE & KEY_MAX, input->keybit);	
 	
-	input->name = "sec_flip";
+	input->name = "sec_flip_key";
 	input->phys = "sec_flip/input0";
 	input->dev.parent = &pdev->dev;
 
@@ -292,27 +373,24 @@ static int __devinit sec_flip_probe(struct platform_device *pdev)
 	flip->input = input;
 
 	platform_set_drvdata(pdev, flip);
-	wake_lock_init(&flip->wlock, WAKE_LOCK_SUSPEND, "sec_flip");
-	setup_timer(&flip->flip_timer, sec_flip_timer, (unsigned long)flip);
 
-/* Initialize the static variable*/
-	flip_status = FLIP_NOTINIT;
-	flip_status_before = FLIP_NOTINIT;
+//	err = switch_dev_register(&switch_flip);
+//	if (err < 0) {
+//		printk("[FLIP]: Failed to register switch device, err:%d\n", err);
+//		goto err_flip;
+//	}
 
 /* INTERRUPT */ 
  	flip->gpio = GPIO_FLIP; 
-	flip->irq = gpio_to_irq(GPIO_FLIP);
-
-	if (pdata->debounce_interval) {
-		err = gpio_set_debounce(flip->gpio,
-					  pdata->debounce_interval * 1000);
-		/* use timer if gpiolib doesn't provide debounce */
-		if (err < 0)
-			flip->timer_debounce = pdata->debounce_interval;
-
-		printk("%s:   error:%d, timer_debounce=%d\n", __func__, err, flip->timer_debounce);
+/*	err = gpio_request(flip->gpio, "flip_det_pin") ; 
+	if (err < 0) {
+		printk(KERN_ERR "[FLIP]: Failed to register switch device\n");
+		goto err_flip;
 	}
+*/
+	//gpio_direction_input(flip->gpio);
 	
+	flip->irq = gpio_to_irq(GPIO_FLIP);
 
 	flip->wq = create_singlethread_workqueue("sec_flip_wq");
 	if (!flip->wq) {
@@ -320,31 +398,40 @@ static int __devinit sec_flip_probe(struct platform_device *pdev)
 	}
 	INIT_WORK(&flip->flip_id_det, sec_flip_work_func);
 
-	device_init_wakeup(&pdev->dev, pdata->wakeup);
-
-
 	err = request_threaded_irq(flip->irq, NULL, sec_flip_irq_handler, (IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING), "flip_det_irq", flip);
 	if (err < 0) {
 		dev_err(&pdev->dev, "Can't get %d IRQ for flip: %d\n",
 				 flip->irq, err);
 		goto unreg_input_dev;
 	}
-       /*enable_irq_wake(flip->irq);*/
-	/*disable_irq_nosync(flip->irq);*/
+	//disable_irq_nosync(flip->irq);
 	
+	device_init_wakeup(&pdev->dev, pdata->wakeup);
+
+	wake_lock_init(&flip->wlock, WAKE_LOCK_SUSPEND, "sec_flip");
+		
 	printk("%s:   gpio=%d   irq=%d\n", __func__,  flip->gpio, flip->irq);
 
-/* SYSFS for FACTORY TEST */
-	flip->sec_flip = device_create(sec_class, NULL, 0, NULL, "sec_flip");
-	err = device_create_file(flip->sec_flip , &dev_attr_flipStatus);
+	/*zjh added flip state check file*/
+#if 1 //zjh
+	err = device_create_file(&pdev->dev, &dev_attr_flipStatus);
 	if(err<0){
 		printk("flip status check cannot create file :  %d\n", flip_status);
 		goto free_flip;
 	}
+#endif
 
+//	init_timer(&flip->flip_timer);
+//	flip->flip_timer.function = sec_flip_timer;
+//	flip->flip_timer.data = (unsigned long)flip;
+	setup_timer(&flip->flip_timer, sec_flip_timer, (unsigned long)flip);
 	mod_timer(&flip->flip_timer, jiffies + msecs_to_jiffies(5000));
+
 	return 0;
 
+err_flip:
+	del_timer_sync(&flip->flip_timer);
+//	switch_dev_unregister(&switch_flip);
 
 unreg_input_dev:
 	input_unregister_device(input);
@@ -352,7 +439,8 @@ unreg_input_dev:
 free_input_dev:
 	input_free_device(input);
 free_flip:
-
+	//pm_runtime_set_suspended(&pdev->dev);
+	//pm_runtime_disable(&pdev->dev);
 	kfree(flip);
 	
 	return err;
@@ -366,7 +454,10 @@ static int __devexit sec_flip_remove(struct platform_device *pdev)
 
 	if (flip!=NULL)
 		del_timer_sync(&flip->flip_timer);
+//	switch_dev_unregister(&switch_flip);
 
+//	pm_runtime_set_suspended(&pdev->dev);
+//	pm_runtime_disable(&pdev->dev);
 	device_init_wakeup(&pdev->dev, 0);
 
 	if (flip!=NULL) {
@@ -385,7 +476,7 @@ static struct platform_driver sec_flip_driver = {
 	.driver		= {
 		.name	= "sec_flip",
 		.owner	= THIS_MODULE,
-#if 1 /* CONFIG_PM */
+#if 0 //CONFIG_PM
 		.pm	= &pm8058_flip_pm_ops,
 #endif
 	},
@@ -404,5 +495,5 @@ static void __exit sec_flip_exit(void)
 module_exit(sec_flip_exit);
 
 MODULE_ALIAS("platform:sec_flip");
-MODULE_DESCRIPTION("Flip Key with GPIO");
+MODULE_DESCRIPTION("PMIC8058 Flip Key");
 MODULE_LICENSE("GPL v2");

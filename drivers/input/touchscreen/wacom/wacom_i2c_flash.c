@@ -18,41 +18,8 @@
  */
 
 #include <linux/wacom_i2c.h>
+
 #include "wacom_i2c_flash.h"
-
-#define ERR_HEX 0x056
-#define RETRY_TRANSFER 5
-unsigned char checksum_data[4];
-
-int calc_checksum(unsigned char *flash_data)
-{
-	unsigned long i;
-
-	if (ums_binary)
-		return 0;
-
-	for (i = 0; i < 4; i++)
-		checksum_data[i] = 0;
-
-	for (i = 0x0000; i < 0xC000; i += 4) {
-		checksum_data[0] ^= flash_data[i];
-		checksum_data[1] ^= flash_data[i+1];
-		checksum_data[2] ^= flash_data[i+2];
-		checksum_data[3] ^= flash_data[i+3];
-	}
-
-	printk(KERN_DEBUG
-		"[E-PEN] %s : %02x, %02x, %02x, %02x\n",
-		__func__, checksum_data[0], checksum_data[1],
-		checksum_data[2], checksum_data[3]);
-
-	for (i = 0; i < 4; i++) {
-		if (checksum_data[i] != Firmware_checksum[i+1])
-			return -ERR_HEX;
-	}
-
-	return 0;
-}
 
 int wacom_i2c_flash_chksum(struct wacom_i2c *wac_i2c, unsigned char *flash_data,
 			   unsigned long *max_address)
@@ -85,14 +52,15 @@ int wacom_i2c_flash_cmd(struct wacom_i2c *wac_i2c)
 	flashq = 0xE0;
 	len = 1;
 
-	ret = wacom_i2c_send(wac_i2c, &flashq, len, true);
+	ret = wacom_i2c_master_send(wac_i2c->client, &flashq, len,
+				    WACOM_I2C_BOOT);
 	if (ret >= 0) {
 
 		i = 0;
 		do {
 			msleep(1);
-			ret = wacom_i2c_recv(wac_i2c,
-						&flashq, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, &flashq,
+						    len, WACOM_I2C_BOOT);
 			i++;
 
 			if (i > RETRY)
@@ -101,7 +69,7 @@ int wacom_i2c_flash_cmd(struct wacom_i2c *wac_i2c)
 	} else {
 		msleep(1);
 		len = 8;
-		ret = wacom_i2c_send(wac_i2c, buf, len, false);
+		ret = i2c_master_send(wac_i2c->client, buf, len);
 		if (ret < 0) {
 			printk(KERN_ERR
 			       "[E-PEN]: Sending flash command failed\n");
@@ -110,8 +78,6 @@ int wacom_i2c_flash_cmd(struct wacom_i2c *wac_i2c)
 		printk(KERN_DEBUG "[E-PEN]: flash send?:%d\n", ret);
 		msleep(270);
 	}
-
-	wac_i2c->boot_mode = true;
 
 	return 0;
 }
@@ -124,7 +90,8 @@ int wacom_i2c_flash_query(struct wacom_i2c *wac_i2c, u8 query, u8 recvdQuery)
 	flashq = query;
 	len = 1;
 
-	ret = wacom_i2c_send(wac_i2c, &flashq, len, true);
+	ret = wacom_i2c_master_send(wac_i2c->client, &flashq, len,
+				    WACOM_I2C_BOOT);
 	if (ret < 0) {
 		printk(KERN_ERR "[E-PEN]: query unsent:%d\n", ret);
 		return -1;
@@ -136,8 +103,8 @@ int wacom_i2c_flash_query(struct wacom_i2c *wac_i2c, u8 query, u8 recvdQuery)
 	do {
 		msleep(1);
 		flashq = query;
-		ret = wacom_i2c_recv(wac_i2c,
-						&flashq, len, true);
+		ret = wacom_i2c_master_recv(wac_i2c->client, &flashq, len,
+					    WACOM_I2C_BOOT);
 		i++;
 
 		if (i > RETRY)
@@ -151,22 +118,9 @@ int wacom_i2c_flash_query(struct wacom_i2c *wac_i2c, u8 query, u8 recvdQuery)
 
 int wacom_i2c_flash_end(struct wacom_i2c *wac_i2c)
 {
-	int ret;
-
-	/* 2012/07/04 Evaluation for 0x80 and 0xA0 added by Wacom*/
-	do {
-		ret = wacom_i2c_flash_query(wac_i2c, FLASH_END, FLASH_END);
-		if (ret == -1)
-			return ERR_FAILED_EXIT;
-	} while (ret == 0xA0 || ret != 0x80);
-	/* 2012/07/04 Evaluation for 0x80 and 0xA0 added by Wacom*/
-
-	/*2012/07/05
-	below added for giving firmware enough time to change to user mode*/
-	msleep(1000);
-
-	printk(KERN_DEBUG "[E-PEN] Digitizer activated\n");
-	wac_i2c->boot_mode = false;
+	if (wacom_i2c_flash_query(wac_i2c, FLASH_END, FLASH_END) == -1)
+		return ERR_FAILED_EXIT;
+	printk(KERN_DEBUG "[E-PEN]: Digitizer activated\n");
 	return 0;
 }
 
@@ -220,7 +174,8 @@ int wacom_i2c_flash_erase(struct wacom_i2c *wac_i2c, u8 cmd_erase,
 		buf[2] = sum;
 
 		len = 3;
-		ret = wacom_i2c_send(wac_i2c, buf, len, true);
+		ret = wacom_i2c_master_send(wac_i2c->client, buf, len,
+					    WACOM_I2C_BOOT);
 		if (ret < 0) {
 			printk(KERN_ERR "[E-PEN]: Erase failed\n");
 			return -1;
@@ -233,8 +188,8 @@ int wacom_i2c_flash_erase(struct wacom_i2c *wac_i2c, u8 cmd_erase,
 		do {
 			/*sleep */
 			msleep(100);
-			ret = wacom_i2c_recv(wac_i2c,
-						&flashq, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, &flashq,
+						    len, WACOM_I2C_BOOT);
 			j++;
 
 			if (j > RETRY || flashq == 0x84 || flashq == 0x88
@@ -249,17 +204,13 @@ int wacom_i2c_flash_erase(struct wacom_i2c *wac_i2c, u8 cmd_erase,
 				printk(KERN_ERR "[E-PEN]: Error:%x\n", flashq);
 				return -1;
 			}
-
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-		} while (flashq == 0xff || flashq != 0x06);
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-
+		} while (flashq == 0xff);
 		if (printk_timed_ratelimit(&swtich_slot_time, 5000))
 			printk(KERN_DEBUG "[E-PEN]: Erasing at %d, ", i);
 		/*sleep */
 		msleep(1);
 	}
-	printk(KERN_DEBUG "[E-PEN] Erasing done\n");
+	printk(KERN_DEBUG "Erasing done\n");
 	return ret;
 }
 
@@ -267,7 +218,7 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 			  u8 size, unsigned long maxAddr)
 {
 	unsigned long ulAddr;
-	int ret, len, i, j, k;
+	int ret, len, i, j;
 	char sum;
 	u8 buf[WRITE_BUFF], bank;
 	unsigned long swtich_slot_time;
@@ -283,18 +234,6 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 		buf[2] = (u8) ((ulAddr & 0xff00) >> 8);
 		buf[3] = size;
 		buf[4] = bank;
-#ifdef CONFIG_MACH_T0
-		/*Pass Garbage*/
-		for (i = 0; i < BLOCK_SIZE_W; i++) {
-			if (Binary[ulAddr+i] != 0xff)
-				break;
-		}
-		if (i == BLOCK_SIZE_W) {
-			printk(KERN_DEBUG"[E-PEN] Pass ulAddr %u\n",
-				(unsigned int)ulAddr);
-			continue;
-		}
-#endif
 
 		for (i = 0; i < 5; i++)
 			sum += buf[i];
@@ -304,40 +243,28 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 
 		len = 6;
 
-		/* 2012/07/18
-		* if the returned data is not equal to the length of the bytes
-		* that is supposed to send/receive, return it as fail
-		*/
-		for (k = 0; k < RETRY_TRANSFER; k++) {
-			ret = wacom_i2c_send(wac_i2c, buf, len, true);
-			if (ret == len)
-				break;
-			if (ret < 0 || k == (RETRY_TRANSFER - 1)) {
-				printk(KERN_ERR "[E-PEN]: Write process aborted\n");
-				return ERR_FAILED_ENTER;
-			}
+		ret = wacom_i2c_master_send(wac_i2c->client, buf, len,
+					    WACOM_I2C_BOOT);
+		if (ret < 0) {
+			printk(KERN_ERR "[E-PEN]: Write process aborted\n");
+			return ERR_FAILED_ENTER;
 		}
-		/*2012/07/18*/
 
 		msleep(10);
 		len = 1;
 		j = 0;
 		do {
 			msleep(5);
-			ret = wacom_i2c_recv(wac_i2c,
-						buf, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, buf, len,
+						    WACOM_I2C_BOOT);
 			j++;
 
 			if (j > RETRY || buf[0] == 0x90) {
 				/*0xff:No data 0x90:Checksum error */
-				printk(KERN_ERR "[E-PEN] Error: %x , 0x%lx(%d)\n",
-					buf[0], ulAddr, __LINE__);
+				printk(KERN_ERR "[E-PEN]: Error:%x\n", buf[0]);
 				return -1;
 			}
-
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-		} while (buf[0] == 0xff || buf[0] != 0x06);
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
+		} while (buf[0] == 0xff);
 
 		msleep(1);
 
@@ -350,20 +277,13 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 		buf[BLOCK_SIZE_W] = sum;
 		len = BLOCK_SIZE_W + 1;
 
-		/* 2012/07/18
-		* if the returned data is not equal to the length of the bytes
-		* that is supposed to send/receive, return it as fail
-		*/
-		for (k = 0; k < RETRY_TRANSFER; k++) {
-			ret = wacom_i2c_send(wac_i2c, buf, len, true);
-			if (ret == len)
-				break;
-			if (ret < 0 || k == (RETRY_TRANSFER - 1)) {
-				printk(KERN_ERR "[E-PEN]: Write process aborted\n");
-				return ERR_FAILED_ENTER;
-			}
+		ret = wacom_i2c_master_send(wac_i2c->client, buf, len,
+					    WACOM_I2C_BOOT);
+		if (ret < 0) {
+			printk(KERN_ERR
+			       "[E-PEN]: Firmware flash aborted while writing\n");
+			return ERR_NOT_FLASH;
 		}
-		/*2012/07/18*/
 
 		msleep(50);
 		len = 1;
@@ -371,8 +291,8 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 
 		do {
 			msleep(10);
-			ret = wacom_i2c_recv(wac_i2c,
-						buf, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, buf, len,
+						    WACOM_I2C_BOOT);
 			j++;
 
 			if (j > RETRY || buf[0] == 0x82 || buf[0] == 0x90) {
@@ -381,15 +301,10 @@ int wacom_i2c_flash_write(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 				   0x82:Write error
 				   0x90:Checksum error
 				 */
-				printk(KERN_ERR "[E-PEN] Error: %x , 0x%lx(%d)\n",
-					buf[0], ulAddr, __LINE__);
+				printk(KERN_ERR "[E-PEN]: Error:%x\n", buf[0]);
 				return -1;
 			}
-
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-		} while (buf[0] == 0xff || buf[0] != 0x06);
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-
+		} while (buf[0] == 0xff);
 		if (printk_timed_ratelimit(&swtich_slot_time, 5000))
 			printk(KERN_DEBUG "[E-PEN]: Written on:0x%lx", ulAddr);
 		msleep(1);
@@ -403,7 +318,7 @@ int wacom_i2c_flash_verify(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 			   u8 size, unsigned long maxAddr)
 {
 	unsigned long ulAddr;
-	int ret, len, i, j, k;
+	int ret, len, i, j;
 	char sum;
 	u8 buf[WRITE_BUFF], bank;
 	unsigned long swtich_slot_time;
@@ -429,37 +344,26 @@ int wacom_i2c_flash_verify(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 		j = 0;
 		/*sleep */
 
-		/* 2012/07/18
-		* if the returned data is not equal to the length of the bytes
-		* that is supposed to send/receive, return it as fail
-		*/
-		for (k = 0; k < RETRY_TRANSFER; k++) {
-			ret = wacom_i2c_send(wac_i2c, buf, len, true);
-			if (ret == len)
-				break;
-			if (ret < 0 || k == (RETRY_TRANSFER - 1)) {
-				printk(KERN_ERR "[E-PEN]: Write process aborted\n");
-				return ERR_FAILED_ENTER;
-			}
+		ret = wacom_i2c_master_send(wac_i2c->client, buf, len,
+					    WACOM_I2C_BOOT);
+		if (ret < 0) {
+			printk(KERN_ERR "[E-PEN]: Write process aborted\n");
+			return ERR_FAILED_ENTER;
 		}
-		/*2012/07/18*/
 
 		len = 1;
 
 		do {
 			msleep(1);
-			ret = wacom_i2c_recv(wac_i2c,
-						buf, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, buf, len,
+						    WACOM_I2C_BOOT);
 			j++;
 			if (j > RETRY || buf[0] == 0x90) {
 				/*0xff:No data 0x90:Checksum error */
-				printk(KERN_ERR "[E-PEN] Error: %x , 0x%lx(%d)\n",
-					buf[0], ulAddr, __LINE__);
+				printk(KERN_ERR "[E-PEN]: Error:%x\n", buf[0]);
 				return -1;
 			}
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-		} while (buf[0] == 0xff || buf[0] != 0x06);
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
+		} while (buf[0] == 0xff);
 
 		msleep(1);
 		sum = 0;
@@ -471,27 +375,20 @@ int wacom_i2c_flash_verify(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 		buf[BLOCK_SIZE_W] = sum;
 		len = BLOCK_SIZE_W + 1;
 
-		/* 2012/07/18
-		* if the returned data is not equal to the length of the bytes
-		* that is supposed to send/receive, return it as fail
-		*/
-		for (k = 0; k < RETRY_TRANSFER; k++) {
-			ret = wacom_i2c_send(wac_i2c, buf, len, true);
-			if (ret == len)
-				break;
-			if (ret < 0 || k == (RETRY_TRANSFER - 1)) {
-				printk(KERN_ERR "[E-PEN]: Write process aborted\n");
-				return ERR_FAILED_ENTER;
-			}
+		ret = wacom_i2c_master_send(wac_i2c->client, buf, len,
+					    WACOM_I2C_BOOT);
+		if (ret < 0) {
+			printk(KERN_ERR
+			       "[E-PEN]: Firmware flash aborted while writing\n");
+			return ERR_NOT_FLASH;
 		}
-		/*2012/07/18*/
 
 		len = 1;
 		j = 0;
 		do {
 			msleep(2);
-			ret = wacom_i2c_recv(wac_i2c,
-						buf, len, true);
+			ret = wacom_i2c_master_recv(wac_i2c->client, buf, len,
+						    WACOM_I2C_BOOT);
 			j++;
 
 			if (j > RETRY || buf[0] == 0x81 || buf[0] == 0x90) {
@@ -500,28 +397,14 @@ int wacom_i2c_flash_verify(struct wacom_i2c *wac_i2c, unsigned long startAddr,
 				   0x82:Write error
 				   0x90:Checksum error
 				 */
-				printk(KERN_ERR "[E-PEN] Error: %x , 0x%lx(%d)\n",
-					buf[0], ulAddr, __LINE__);
+				printk(KERN_ERR "[E-PEN]: Error:%x", buf[0]);
 				return -1;
 			}
-
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-		} while (buf[0] == 0xff || buf[0] != 0x06);
-		/* 2012/07/04 Evaluation if 0x06 or not added by Wacom*/
-
+		} while (buf[0] == 0xff);
 		if (printk_timed_ratelimit(&swtich_slot_time, 5000))
 			printk(KERN_DEBUG "[E-PEN]: Verified:0x%lx", ulAddr);
 		msleep(1);
 	}
-
-#if defined(CONFIG_MACH_P4NOTE)
-	if (calc_checksum(Binary)) {
-		printk(KERN_DEBUG
-			"[E-PEN] check sum not matched\n");
-		return -ERR_HEX;
-	}
-#endif
-
 	printk("\n[E-PEN]: Verifying done\n");
 
 	return 0;
@@ -533,22 +416,6 @@ int wacom_i2c_flash(struct wacom_i2c *wac_i2c)
 	int ret = 0, blver = 0, mcu = 0;
 	u32 max_addr = 0, cmd_addr = 0;
 
-	if (Binary == NULL) {
-		printk(KERN_ERR"[E-PEN] Data is NULL. Exit.\n");
-		return -1;
-	}
-
-#if defined(CONFIG_MACH_P4NOTE)
-	if (calc_checksum(Binary)) {
-		printk(KERN_DEBUG
-			"[E-PEN] check sum not matched\n");
-		return -ERR_HEX;
-	}
-#endif
-
-#ifdef WACOM_HAVE_FWE_PIN
-	wac_i2c->wac_pdata->compulsory_flash_mode(true);
-#endif
 	wake_lock(&wac_i2c->wakelock);
 
 	ret = wacom_i2c_flash_cmd(wac_i2c);
@@ -588,54 +455,29 @@ int wacom_i2c_flash(struct wacom_i2c *wac_i2c)
 		fw_update_enable = true;
 		break;
 
-	case MPUVER_505:
-		printk(KERN_DEBUG "[E-PEN]: Flashing for 505 started\n");
-		max_addr = MAX_ADDR_505;
-		cmd_addr = MAX_BLOCK_505;
-		fw_update_enable = true;
-		break;
-
 	default:
 		printk(KERN_DEBUG "[E-PEN]: default called\n");
 		break;
 	}
 
 	if (fw_update_enable) {
-		bool valid_hex = false;
-		int cnt = 0;
-		/*2012/07/04: below modified by Wacom*/
-		/*If wacom_i2c_flash_verify returns -ERR_HEX, */
-		/*please redo whole process of flashing from  */
-		/*wacom_i2c_flash_erase                       */
-		do {
-			ret = wacom_i2c_flash_erase(wac_i2c, FLASH_ERASE,
-				    cmd_addr, END_BLOCK);
-			if (ret < 0) {
-				printk(KERN_ERR "[E-PEN] error - erase\n");
-				continue;
-			}
-			msleep(20);
+		ret = wacom_i2c_flash_erase(wac_i2c, FLASH_ERASE,
+			    cmd_addr, END_BLOCK);
+		if (ret < 0)
+			goto fw_update_error;
+		printk(KERN_DEBUG "[E-PEN]: erased:%d\n", ret);
+		msleep(10);
 
-			ret = wacom_i2c_flash_write(wac_i2c, START_ADDR,
-				    NUM_BLOCK_2WRITE, max_addr);
-			if (ret < 0) {
-				printk(KERN_ERR "[E-PEN] error - writing\n");
-				continue;
-			}
-			msleep(20);
+		ret = wacom_i2c_flash_write(wac_i2c, START_ADDR,
+			    NUM_BLOCK_2WRITE, max_addr);
+		if (ret < 0)
+			goto fw_update_error;
+		msleep(1);
 
-			ret = wacom_i2c_flash_verify(wac_i2c, START_ADDR,
-				     NUM_BLOCK_2WRITE, max_addr);
-
-			if (ret == -ERR_HEX)
-				printk(KERN_DEBUG "[E-PEN]: firmware is not valied\n");
-			else if (ret < 0) {
-				printk(KERN_ERR "[E-PEN] error - verifying\n");
-				continue;
-			} else
-				valid_hex = true;
-		} while ((!valid_hex) && (cnt < 10));
-		/*2012/07/04: Wacom*/
+		ret = wacom_i2c_flash_verify(wac_i2c, START_ADDR,
+			     NUM_BLOCK_2WRITE, max_addr);
+		if (ret < 0)
+			goto fw_update_error;
 
 		printk(KERN_DEBUG "[E-PEN]: Firmware successfully updated\n");
 	}
@@ -643,14 +485,8 @@ int wacom_i2c_flash(struct wacom_i2c *wac_i2c)
 
 mcu_type_error:
 	wacom_i2c_flash_end(wac_i2c);
-	if (ret < 0)
-		printk(KERN_ERR "[E-PEN] error - wacom_i2c_flash_end\n");
-
 fw_update_error:
 	wake_unlock(&wac_i2c->wakelock);
-#ifdef WACOM_HAVE_FWE_PIN
-	wac_i2c->wac_pdata->compulsory_flash_mode(false);
-#endif
 	return ret;
 }
 

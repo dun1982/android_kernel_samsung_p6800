@@ -805,7 +805,6 @@ return 0;
 
 exit_class_create_failed:
 exit_i2c_failed:
-	misc_deregister(&akm->akmd_device);
 exit_akmd_device_register_failed:
 #if USING_IRQ
 	free_irq(akm->irq, akm);

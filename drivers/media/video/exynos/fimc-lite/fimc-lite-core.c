@@ -2021,7 +2021,7 @@ static int flite_probe(struct platform_device *pdev)
 				      pdev->name);
 	if (!regs_res) {
 		dev_err(&pdev->dev, "Failed to request io memory region\n");
-		goto err_flite;
+		goto err_resource;
 	}
 
 	flite->regs_res = regs_res;
@@ -2044,10 +2044,8 @@ static int flite_probe(struct platform_device *pdev)
 	}
 
 	sd = kzalloc(sizeof(*sd), GFP_KERNEL);
-	if (!sd) {
-		ret = -ENOMEM;
-		goto err_irq;
-	}
+	if (!sd)
+	       goto err_irq;
 	v4l2_subdev_init(sd, &flite_subdev_ops);
 	snprintf(sd->name, sizeof(sd->name), "flite-subdev.%d", flite->id);
 
@@ -2063,16 +2061,14 @@ static int flite_probe(struct platform_device *pdev)
 #endif
 	mutex_init(&flite->lock);
 	flite->mdev = flite_get_capture_md(MDEV_CAPTURE);
-	if (IS_ERR_OR_NULL(flite->mdev)) {
-		ret = -ENODEV;
-		goto err_device_register;
-	}
+	if (IS_ERR_OR_NULL(flite->mdev))
+		goto err_irq;
 
 	flite_dbg("mdev = 0x%08x", (u32)flite->mdev);
 
 	ret = flite_register_video_device(flite);
 	if (ret)
-		goto err_device_register;
+		goto err_irq;
 
 	/* Get mipi-csis subdev ptr using mdev */
 	flite->sd_csis = flite->mdev->csis_sd[flite->id];
@@ -2134,8 +2130,6 @@ err_vfd_alloc:
 	media_entity_cleanup(&flite->vfd->entity);
 	video_device_release(flite->vfd);
 #endif
-err_device_register:
-	kfree(sd);
 err_irq:
 	free_irq(flite->irq, flite);
 err_reg_unmap:

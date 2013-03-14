@@ -23,8 +23,6 @@
 
 #ifdef CONFIG_BT_MGMT
 #include "mgmt_mgmt.h"
-#elif defined(CONFIG_BT_TIZEN)
-#include "tizen/mgmt.h"
 #else
 
 #define MGMT_INDEX_NONE			0xFFFF

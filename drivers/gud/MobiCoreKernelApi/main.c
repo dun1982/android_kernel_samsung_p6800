@@ -142,7 +142,6 @@ static int __init mcapi_init(void)
 
 	if (!modCtx->sk) {
 		MCDRV_ERROR("register of recieve handler failed");
-		kfree(modCtx);
 		return -EFAULT;
 	}
 

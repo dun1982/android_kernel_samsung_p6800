@@ -21,8 +21,6 @@
 */
 #ifdef CONFIG_BT_MGMT
 #include "smp_mgmt.h"
-#elif defined(CONFIG_BT_TIZEN)
-#include "tizen/smp.h"
 #else
 #ifndef __SMP_H
 #define __SMP_H

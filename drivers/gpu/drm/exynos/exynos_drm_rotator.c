@@ -19,7 +19,6 @@
 #include "drmP.h"
 #include "exynos_drm.h"
 #include "exynos_drm_drv.h"
-#include "exynos_drm_iommu.h"
 #include "exynos_drm_ipp.h"
 
 /* Configuration */
@@ -103,7 +102,6 @@ struct rot_context {
 	void __iomem			*regs;
 	int				irq;
 	struct exynos_drm_ippdrv	ippdrv;
-	int				cur_buf_id[EXYNOS_DRM_OPS_MAX];
 	bool				suspended;
 };
 
@@ -308,13 +306,13 @@ static irqreturn_t rotator_irq_handler(int irq, void *arg)
 	irq_status = rotator_reg_get_irq_status(rot);
 	rotator_reg_set_irq_status_clear(rot, irq_status);
 
-	if (irq_status == ROT_IRQ_STATUS_COMPLETE)
-		ipp_send_event_handler(ippdrv,
-					rot->cur_buf_id[EXYNOS_DRM_OPS_DST]);
-	else {
+	if (irq_status != ROT_IRQ_STATUS_COMPLETE) {
 		DRM_ERROR("the SFR is set illegally\n");
 		rotator_reg_get_dump(rot);
 	}
+
+	if (irq_status == ROT_IRQ_STATUS_COMPLETE)
+		ipp_send_event_handler(ippdrv, 0);
 
 	return IRQ_HANDLED;
 }
@@ -389,23 +387,19 @@ static int rotator_src_set_size(struct device *dev, int swap,
 	return 0;
 }
 
-static int rotator_src_set_addr(struct device *dev,
-				struct drm_exynos_ipp_buf_info *buf_info,
-				u32 buf_id, enum drm_exynos_ipp_buf_ctrl ctrl)
+static int rotator_src_set_addr(struct device *dev, dma_addr_t *base, u32 id,
+					enum drm_exynos_ipp_buf_ctrl ctrl)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
 	dma_addr_t addr[EXYNOS_DRM_PLANAR_MAX];
-	u32 fmt, hsize, vsize;
 	int i;
-
-	/* Set current buf_id */
-	rot->cur_buf_id[EXYNOS_DRM_OPS_SRC] = buf_id;
+	u32 fmt;
 
 	switch (ctrl) {
-	case IPP_BUF_CTRL_QUEUE:
+	case IPP_BUF_CTRL_MAP:
 		/* Set address configuration */
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
-			addr[i] = buf_info->base[i];
+			addr[i] = base[i];
 
 		/* Get format */
 		fmt = rotator_reg_get_format(rot);
@@ -413,6 +407,8 @@ static int rotator_src_set_addr(struct device *dev,
 		/* Re-set cb planar for NV12 format */
 		if ((fmt == ROT_CONTROL_FMT_YCBCR420_2P) &&
 					(addr[EXYNOS_DRM_PLANAR_CB] == 0x00)) {
+			u32 hsize, vsize;
+
 			/* Get buf size */
 			rotator_reg_get_src_buf_size(rot, &hsize, &vsize);
 
@@ -424,9 +420,9 @@ static int rotator_src_set_addr(struct device *dev,
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
 			rotator_reg_set_src_buf_addr(rot, addr[i], i);
 		break;
-	case IPP_BUF_CTRL_DEQUEUE:
+	case IPP_BUF_CTRL_UNMAP:
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
-			rotator_reg_set_src_buf_addr(rot, buf_info->base[i], i);
+			rotator_reg_set_src_buf_addr(rot, base[i], i);
 		break;
 	default:
 		/* Nothing to do */
@@ -465,8 +461,13 @@ static int rotator_dst_set_size(struct device *dev, int swap,
 	fmt = rotator_reg_get_format(rot);
 
 	/* Align buffer size */
-	hsize = sz->hsize;
-	vsize = sz->vsize;
+	if (swap) {
+		hsize = sz->vsize;
+		vsize = sz->hsize;
+	} else {
+		hsize = sz->hsize;
+		vsize = sz->vsize;
+	}
 	rotator_align_size(rot, fmt, &hsize, &vsize);
 
 	/* Set buffer size configuration */
@@ -478,23 +479,19 @@ static int rotator_dst_set_size(struct device *dev, int swap,
 	return 0;
 }
 
-static int rotator_dst_set_addr(struct device *dev,
-				struct drm_exynos_ipp_buf_info *buf_info,
-				u32 buf_id, enum drm_exynos_ipp_buf_ctrl ctrl)
+static int rotator_dst_set_addr(struct device *dev, dma_addr_t *base, u32 id,
+					enum drm_exynos_ipp_buf_ctrl ctrl)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
 	dma_addr_t addr[EXYNOS_DRM_PLANAR_MAX];
-	u32 fmt, hsize, vsize;
 	int i;
-
-	/* Set current buf_id */
-	rot->cur_buf_id[EXYNOS_DRM_OPS_DST] = buf_id;
+	u32 fmt;
 
 	switch (ctrl) {
-	case IPP_BUF_CTRL_QUEUE:
+	case IPP_BUF_CTRL_MAP:
 		/* Set address configuration */
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
-			addr[i] = buf_info->base[i];
+			addr[i] = base[i];
 
 		/* Get format */
 		fmt = rotator_reg_get_format(rot);
@@ -502,6 +499,8 @@ static int rotator_dst_set_addr(struct device *dev,
 		/* Re-set cb planar for NV12 format */
 		if ((fmt == ROT_CONTROL_FMT_YCBCR420_2P) &&
 					(addr[EXYNOS_DRM_PLANAR_CB] == 0x00)) {
+			u32 hsize, vsize;
+
 			/* Get buf size */
 			rotator_reg_get_dst_buf_size(rot, &hsize, &vsize);
 
@@ -513,9 +512,9 @@ static int rotator_dst_set_addr(struct device *dev,
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
 			rotator_reg_set_dst_buf_addr(rot, addr[i], i);
 		break;
-	case IPP_BUF_CTRL_DEQUEUE:
+	case IPP_BUF_CTRL_UNMAP:
 		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
-			rotator_reg_set_dst_buf_addr(rot, buf_info->base[i], i);
+			rotator_reg_set_dst_buf_addr(rot, base[i], i);
 		break;
 	default:
 		/* Nothing to do */
@@ -537,7 +536,7 @@ static struct exynos_drm_ipp_ops rot_dst_ops = {
 	.set_addr	=	rotator_dst_set_addr,
 };
 
-static int rotator_ippdrv_check_property(struct device *dev,
+static int rotator_ippdrv_check_valid(struct device *dev,
 				struct drm_exynos_ipp_property *property)
 {
 	struct drm_exynos_ipp_config *src_config =
@@ -604,6 +603,11 @@ static int rotator_ippdrv_check_property(struct device *dev,
 	}
 
 	/* Check size configuration */
+	if ((src_pos->w != dst_pos->w) || (src_pos->h != dst_pos->h)) {
+		DRM_DEBUG_KMS("[%s]not support scale feature\n", __func__);
+		return -EINVAL;
+	}
+
 	if ((src_pos->x + src_pos->w > src_sz->hsize) ||
 		(src_pos->y + src_pos->h > src_sz->vsize)) {
 		DRM_DEBUG_KMS("[%s]out of source buffer bound\n", __func__);
@@ -617,22 +621,10 @@ static int rotator_ippdrv_check_property(struct device *dev,
 								__func__);
 			return -EINVAL;
 		}
-
-		if ((src_pos->w != dst_pos->h) || (src_pos->h != dst_pos->w)) {
-			DRM_DEBUG_KMS("[%s]not support scale feature\n",
-								__func__);
-			return -EINVAL;
-		}
 	} else {
 		if ((dst_pos->x + dst_pos->w > dst_sz->hsize) ||
 			(dst_pos->y + dst_pos->h > dst_sz->vsize)) {
 			DRM_DEBUG_KMS("[%s]out of destination buffer bound\n",
-								__func__);
-			return -EINVAL;
-		}
-
-		if ((src_pos->w != dst_pos->w) || (src_pos->h != dst_pos->h)) {
-			DRM_DEBUG_KMS("[%s]not support scale feature\n",
 								__func__);
 			return -EINVAL;
 		}
@@ -648,11 +640,6 @@ static int rotator_ippdrv_start(struct device *dev, enum drm_exynos_ipp_cmd cmd)
 	if (rot->suspended) {
 		DRM_ERROR("suspended state\n");
 		return -EPERM;
-	}
-
-	if (cmd != IPP_CMD_M2M) {
-		DRM_ERROR("not support cmd: %d\n", cmd);
-		return -EINVAL;
 	}
 
 	/* Set interrupt enable */
@@ -710,8 +697,7 @@ static int __devinit rotator_probe(struct platform_device *pdev)
 		goto err_get_irq;
 	}
 
-	ret = request_threaded_irq(rot->irq, NULL, rotator_irq_handler,
-					IRQF_ONESHOT, "drm_rotator", rot);
+	ret = request_irq(rot->irq, rotator_irq_handler, 0, "drm_rotator", rot);
 	if (ret < 0) {
 		dev_err(dev, "failed to request irq\n");
 		goto err_get_irq;
@@ -728,10 +714,9 @@ static int __devinit rotator_probe(struct platform_device *pdev)
 
 	ippdrv = &rot->ippdrv;
 	ippdrv->dev = dev;
-	ippdrv->iommu_used = true;
 	ippdrv->ops[EXYNOS_DRM_OPS_SRC] = &rot_src_ops;
 	ippdrv->ops[EXYNOS_DRM_OPS_DST] = &rot_dst_ops;
-	ippdrv->check_property = rotator_ippdrv_check_property;
+	ippdrv->check_valid = rotator_ippdrv_check_valid;
 	ippdrv->start = rotator_ippdrv_start;
 
 	platform_set_drvdata(pdev, rot);
@@ -812,13 +797,8 @@ struct platform_device_id rotator_driver_ids[] = {
 static int rotator_suspend(struct device *dev)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct exynos_drm_ippdrv *ippdrv = &rot->ippdrv;
-	struct drm_device *drm_dev = ippdrv->drm_dev;
-	struct exynos_drm_private *drm_priv = drm_dev->dev_private;
 
 	rot->suspended = true;
-
-	exynos_drm_iommu_deactivate(drm_priv->vmm, dev);
 
 	return 0;
 }
@@ -826,18 +806,10 @@ static int rotator_suspend(struct device *dev)
 static int rotator_resume(struct device *dev)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct exynos_drm_ippdrv *ippdrv = &rot->ippdrv;
-	struct drm_device *drm_dev = ippdrv->drm_dev;
-	struct exynos_drm_private *drm_priv = drm_dev->dev_private;
-	int ret;
-
-	ret = exynos_drm_iommu_activate(drm_priv->vmm, dev);
-	if (ret)
-		DRM_ERROR("failed to activate iommu\n");
 
 	rot->suspended = false;
 
-	return ret;
+	return 0;
 }
 #endif
 

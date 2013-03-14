@@ -369,7 +369,7 @@ static int s5p_tvout_tvif_s_std(
 	int i;
 	v4l2_std_id std_id = *norm;
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 	for (i = 0; i < S5P_TVOUT_TVIF_NO_OF_STANDARD; i++) {
@@ -379,8 +379,7 @@ static int s5p_tvout_tvif_s_std(
 
 	if (i == S5P_TVOUT_TVIF_NO_OF_STANDARD) {
 		tvout_err("There is no TV standard(0x%08Lx)\n", std_id);
-
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 		s5p_tvout_mutex_unlock();
 #endif
 		return -EINVAL;
@@ -391,7 +390,7 @@ static int s5p_tvout_tvif_s_std(
 	tvout_dbg("standard id=0x%X, name=\"%s\"\n",
 			(u32) std_id, s5p_tvout_tvif_standard[i].name);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 
@@ -438,7 +437,7 @@ static int s5p_tvout_tvif_s_output(
 		return -EINVAL;
 	}
 
-#if defined(CONFIG_HAS_EARLYSUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 	on_start_process = true;
@@ -583,12 +582,12 @@ static int s5p_tvout_tvif_s_output(
 
 	s5p_tvif_ctrl_start(tv_std, tv_if);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;
 error_on_tvif_s_output:
-#if defined(CONFIG_HAS_EARLYSUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return -1;
@@ -750,7 +749,7 @@ long s5p_tvout_tvif_ioctl(
 	void *argp = (void *) arg;
 	int i = 0;
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 
@@ -917,13 +916,13 @@ long s5p_tvout_tvif_ioctl(
 		break;
 	}
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return video_ioctl2(file, cmd, arg);
 
 end_tvif_ioctl:
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return ret;
@@ -954,11 +953,8 @@ static int s5p_tvout_tvif_release(struct file *file)
 	tvout_dbg("on_stop_process(%d)\n", on_stop_process);
 	atomic_dec(&s5p_tvout_v4l2_private.tvif_use);
 
-	if (atomic_read(&s5p_tvout_v4l2_private.tvif_use) == 0) {
-		s5p_tvout_mutex_lock();
+	if (atomic_read(&s5p_tvout_v4l2_private.tvif_use) == 0)
 		s5p_tvif_ctrl_stop();
-		s5p_tvout_mutex_unlock();
-	}
 
 	on_stop_process = false;
 	tvout_dbg("on_stop_process(%d)\n", on_stop_process);
@@ -1036,7 +1032,7 @@ static int s5p_tvout_vo_s_fmt_type_private(
 			(u32) vparam.base_y, (u32) vparam.base_c,
 			pix_fmt->field);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 	/* check progressive or not */
@@ -1134,72 +1130,52 @@ static int s5p_tvout_vo_s_fmt_type_private(
 		pix_fmt->height, color, field);
 #else
 	if (pix_fmt->priv) {
-		copy_buff_idx =
-			s5ptv_vp_buff.
-				copy_buff_idxs[s5ptv_vp_buff.curr_copy_idx];
+		copy_buff_idx = s5ptv_vp_buff.copy_buff_idxs[s5ptv_vp_buff.curr_copy_idx];
 
-		if ((void *)s5ptv_vp_buff.vp_buffs[copy_buff_idx].vir_base
-			== NULL) {
-			s5p_vp_ctrl_set_src_plane(
-				(u32) vparam.base_y, (u32) vparam.base_c,
-				pix_fmt->width, pix_fmt->height, color, field);
+		if ((void *)s5ptv_vp_buff.vp_buffs[copy_buff_idx].vir_base == NULL) {
+			s5p_vp_ctrl_set_src_plane((u32) vparam.base_y, (u32) vparam.base_c,
+					pix_fmt->width, pix_fmt->height, color, field);
 		} else {
-			if (pix_fmt->pixelformat ==
-				V4L2_PIX_FMT_NV12T
-				|| pix_fmt->pixelformat == V4L2_PIX_FMT_NV21T) {
-				y_size = ALIGN(ALIGN(pix_fmt->width, 128) *
-					ALIGN(pix_fmt->height, 32), SZ_8K);
-				cbcr_size = ALIGN(ALIGN(pix_fmt->width, 128) *
-					ALIGN(pix_fmt->height >> 1, 32), SZ_8K);
+			if (pix_fmt->pixelformat == V4L2_PIX_FMT_NV12T
+					|| pix_fmt->pixelformat == V4L2_PIX_FMT_NV21T) {
+				y_size = ALIGN(ALIGN(pix_fmt->width, 128) * ALIGN(pix_fmt->height, 32), SZ_8K);
+				cbcr_size = ALIGN(ALIGN(pix_fmt->width, 128) * ALIGN(pix_fmt->height >> 1, 32), SZ_8K);
 			} else {
 				y_size = pix_fmt->width * pix_fmt->height;
-				cbcr_size =
-					pix_fmt->width * (pix_fmt->height >> 1);
+				cbcr_size = pix_fmt->width * (pix_fmt->height >> 1);
 			}
 
-			src_vir_y_addr = (unsigned int)phys_to_virt(
-				(unsigned long)vparam.base_y);
-			src_vir_cb_addr = (unsigned int)phys_to_virt(
-				(unsigned long)vparam.base_c);
+			src_vir_y_addr = (unsigned int)phys_to_virt((unsigned long)vparam.base_y);
+			src_vir_cb_addr = (unsigned int)phys_to_virt((unsigned long)vparam.base_c);
 
-			memcpy(
-				(void *)
-				s5ptv_vp_buff.vp_buffs[copy_buff_idx].vir_base,
-				(void *)src_vir_y_addr, y_size);
-			memcpy(
-				(void *)s5ptv_vp_buff.vp_buffs[copy_buff_idx].
-					vir_base + y_size,
-				(void *)src_vir_cb_addr, cbcr_size);
+			memcpy((void *)s5ptv_vp_buff.vp_buffs[copy_buff_idx].vir_base,
+					(void *)src_vir_y_addr, y_size);
+			memcpy((void *)s5ptv_vp_buff.vp_buffs[copy_buff_idx].vir_base + y_size,
+					(void *)src_vir_cb_addr, cbcr_size);
 
 			flush_all_cpu_caches();
 			outer_flush_all();
 
-			s5p_vp_ctrl_set_src_plane(
-				(u32) s5ptv_vp_buff.
-					vp_buffs[copy_buff_idx].phy_base,
-				(u32) s5ptv_vp_buff.
-					vp_buffs[copy_buff_idx].phy_base
-					+ y_size,
-				pix_fmt->width, pix_fmt->height, color, field);
+			s5p_vp_ctrl_set_src_plane((u32) s5ptv_vp_buff.vp_buffs[copy_buff_idx].phy_base,
+					(u32) s5ptv_vp_buff.vp_buffs[copy_buff_idx].phy_base + y_size,
+					pix_fmt->width, pix_fmt->height, color, field);
 
 			s5ptv_vp_buff.curr_copy_idx++;
-			if (s5ptv_vp_buff.curr_copy_idx >=
-				S5PTV_VP_BUFF_CNT - 1)
+			if (s5ptv_vp_buff.curr_copy_idx >= S5PTV_VP_BUFF_CNT - 1)
 				s5ptv_vp_buff.curr_copy_idx = 0;
 		}
 	} else {
-		s5p_vp_ctrl_set_src_plane(
-			(u32) vparam.base_y, (u32) vparam.base_c,
-			pix_fmt->width, pix_fmt->height, color, field);
+		s5p_vp_ctrl_set_src_plane((u32) vparam.base_y, (u32) vparam.base_c,
+				pix_fmt->width, pix_fmt->height, color, field);
 	}
 #endif
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;
 
 error_on_s_fmt_type_private:
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return -1;
@@ -1222,7 +1198,7 @@ static int s5p_tvout_vo_s_fmt_vid_overlay(
 			rect->left, rect->top, rect->width, rect->height,
 			a->fmt.win.global_alpha);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 	s5p_tvout_v4l2_private.vo_dst_fmt = a->fmt.win;
@@ -1232,7 +1208,7 @@ static int s5p_tvout_vo_s_fmt_vid_overlay(
 		rect->left, rect->top,
 		rect->width, rect->height);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;
@@ -1258,7 +1234,7 @@ static int s5p_tvout_vo_s_crop(
 		struct file *file, void *fh, struct v4l2_crop *a)
 {
 	tvout_dbg("\n");
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 	switch (a->type) {
@@ -1281,7 +1257,7 @@ static int s5p_tvout_vo_s_crop(
 		tvout_err("Invalid buf type(0x%08x)\n", a->type);
 		break;
 	}
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;
@@ -1306,7 +1282,7 @@ static int s5p_tvout_vo_s_fbuf(
 			(a->flags & V4L2_FBUF_FLAG_GLOBAL_ALPHA) ? 1 : 0,
 			a->fmt.priv);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
 
@@ -1315,7 +1291,7 @@ static int s5p_tvout_vo_s_fbuf(
 
 	s5p_vp_ctrl_set_dest_win_priority(a->fmt.priv);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;
@@ -1326,21 +1302,15 @@ static int s5p_tvout_vo_overlay(
 {
 	tvout_dbg("%s\n", (i) ? "start" : "stop");
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_lock();
 #endif
-	if (i) {
+	if (i)
 		s5p_vp_ctrl_start();
-		/* restore vsync interrupt setting */
-		s5p_mixer_set_vsync_interrupt(
-			s5p_mixer_ctrl_get_vsync_interrupt());
-	} else {
-		/* disable vsync interrupt when VP is disabled */
-		s5p_mixer_ctrl_disable_vsync_interrupt();
+	else
 		s5p_vp_ctrl_stop();
-	}
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CLOCK_GATING_ON_EARLY_SUSPEND)
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	s5p_tvout_mutex_unlock();
 #endif
 	return 0;

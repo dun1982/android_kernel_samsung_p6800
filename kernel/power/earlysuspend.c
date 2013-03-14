@@ -188,9 +188,6 @@ abort:
 	pm_wd_del_timer(&timer);
 }
 
-#ifdef CONFIG_FAST_BOOT
-extern bool fake_shut_down;
-#endif
 void request_suspend_state(suspend_state_t new_state)
 {
 	unsigned long irqflags;
@@ -215,12 +212,6 @@ void request_suspend_state(suspend_state_t new_state)
 		state |= SUSPEND_REQUESTED;
 		queue_work(suspend_work_queue, &early_suspend_work);
 	} else if (old_sleep && new_state == PM_SUSPEND_ON) {
-#ifdef CONFIG_FAST_BOOT
-		if (fake_shut_down) {
-			fake_shut_down = false;
-			pr_info("%s : end of fake shut down\n", __func__);
-		}
-#endif
 		state &= ~SUSPEND_REQUESTED;
 		wake_lock(&main_wake_lock);
 		queue_work(suspend_work_queue, &late_resume_work);

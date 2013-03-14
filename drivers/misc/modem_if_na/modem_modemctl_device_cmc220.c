@@ -39,7 +39,7 @@ static int cmc220_on(struct modem_ctl *mc)
 	msleep(300);
 	gpio_set_value(mc->gpio_cp_reset, 1);
 	msleep(100);
-	gpio_set_value(mc->gpio_cp_off, 0);
+	gpio_set_value(mc->gpio_cp_off, 1);
 	msleep(300);
 	mc->phone_state = STATE_BOOTING;
 	return 0;
@@ -56,9 +56,10 @@ static int cmc220_off(struct modem_ctl *mc)
 
 	gpio_set_value(mc->gpio_cp_on, 0);
 	msleep(100);
-	gpio_set_value(mc->gpio_cp_off, 1);
-	msleep(100);
 	gpio_set_value(mc->gpio_cp_reset, 0);
+	msleep(100);
+	gpio_set_value(mc->gpio_cp_off, 0);
+
 
 	mc->phone_state = STATE_OFFLINE;
 
@@ -104,14 +105,13 @@ static int cmc220_reset(struct modem_ctl *mc)
 	if (!mc->gpio_cp_reset)
 		return -ENXIO;
 
-	if (cmc220_off(mc))
-		return -ENXIO;
+	gpio_set_value(mc->gpio_host_active, 1);
+	gpio_set_value(mc->gpio_cp_reset, 0);
 	msleep(100);
-	if (cmc220_on(mc))
-		return -ENXIO;
-
+	gpio_set_value(mc->gpio_cp_reset, 1);
+	msleep(100);
+	gpio_set_value(mc->gpio_host_active, 1);
 	mc->phone_state = STATE_BOOTING;
-
 	return 0;
 }
 

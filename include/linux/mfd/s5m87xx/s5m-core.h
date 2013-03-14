@@ -145,7 +145,6 @@ enum s5m8767_reg {
 	S5M8767_REG_LDO26CTRL,
 	S5M8767_REG_LDO27CTRL,
 	S5M8767_REG_LDO28CTRL,
-	S5M8767_REG_BUCK1DVS2 = 0xE2,
 };
 
 /* S5M8763 registers */
@@ -378,7 +377,6 @@ struct s5m_platform_data {
 
 	bool				wtsr_smpl;
 
-	int				buck1_init;
 	int				buck2_init;
 	int				buck3_init;
 	int				buck4_init;

@@ -17,6 +17,11 @@
 #include <linux/earlysuspend.h>
 #endif
 
+#if defined(CONFIG_TARGET_LOCALE_NAATT_TEMP)
+/* Temp Fix NAGSM_SEL_ANDROID_MOHAMMAD_ANSARI_20111224*/
+#define CONFIG_TARGET_LOCALE_NAATT
+#endif
+
 /* Touchkey Register */
 #define KEYCODE_REG			0x00
 
@@ -29,9 +34,9 @@
 	|| defined(CONFIG_TARGET_LOCALE_NA)\
 	|| defined(CONFIG_MACH_M0)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_M3)\
-	|| defined(CONFIG_MACH_T0)\
-	|| defined(CONFIG_MACH_SUPERIOR_KOR_SKT)
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
+	|| defined(CONFIG_MACH_T0)
 #define TK_CMD_LED_ON		0x10
 #define TK_CMD_LED_OFF		0x20
 #else
@@ -53,28 +58,25 @@
 #define TK_FIRMWARE_VER  0x0E
 #define TK_MODULE_VER    0x08
 #elif defined(CONFIG_MACH_M0)\
-	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_M3)
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
+	 || defined(CONFIG_MACH_C1)
 #define TK_FIRMWARE_VER  0x06
 #define TK_MODULE_VER    0x05
 #elif defined(CONFIG_MACH_T0)
-#define TK_FIRMWARE_VER	 0x11
-#define TK_MODULE_VER    0x08
+#define TK_FIRMWARE_VER	 0x00
+#define TK_MODULE_VER    0x00
 #else
 #define TK_FIRMWARE_VER	 0x04
 #define TK_MODULE_VER    0x00
 #endif
 
-#if defined(CONFIG_MACH_SUPERIOR_KOR_SKT)
-#define	TK_VDD_REGULATOR "vtouch_1.8v"
-#endif
-
 /* LDO Regulator */
 #if defined(CONFIG_MACH_M0)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_M3)\
-	|| defined(CONFIG_MACH_T0)\
-	|| defined(CONFIG_MACH_SUPERIOR_KOR_SKT)
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
+	|| defined(CONFIG_MACH_T0)
 #define	TK_REGULATOR_NAME	"touchkey"
 #else
 #define	TK_REGULATOR_NAME	"touch"
@@ -84,10 +86,10 @@
 #if defined(CONFIG_MACH_M0)\
 	|| defined(CONFIG_MACH_C1_KOR_SKT)\
 	|| defined(CONFIG_MACH_C1_KOR_KT)\
-	|| defined(CONFIG_MACH_M3)\
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_T0)\
-	|| defined(CONFIG_MACH_SUPERIOR_KOR_SKT)
+	|| defined(CONFIG_MACH_T0)
 #define LED_LDO_WITH_EN_PIN
 #else
 #define LED_LDO_WITH_REGULATOR
@@ -95,22 +97,22 @@
 
 /* Autocalibration */
 #if defined(CONFIG_TARGET_LOCALE_NAATT)\
-	|| defined(CONFIG_TARGET_LOCALE_NAATT_TEMP)\
 	|| defined(CONFIG_TARGET_LOCALE_NA)\
 	|| defined(CONFIG_MACH_Q1_BD)\
 	|| defined(CONFIG_MACH_M0)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_M3)\
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
 	|| defined(CONFIG_MACH_T0)
 #define TK_HAS_AUTOCAL
 #endif
 
 /* Generalized SMBus access */
 #if defined(CONFIG_MACH_M0)\
-	|| defined(CONFIG_MACH_M3)\
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_T0)\
-	|| defined(CONFIG_MACH_SUPERIOR_KOR_SKT)
+	|| defined(CONFIG_MACH_T0)
 #define TK_USE_GENERAL_SMBUS
 #endif
 
@@ -120,21 +122,19 @@
 	|| defined(CONFIG_TARGET_LOCALE_NA)\
 	|| defined(CONFIG_MACH_M0)\
 	|| defined(CONFIG_MACH_C1)\
-	|| defined(CONFIG_MACH_M3)\
-	|| defined(CONFIG_MACH_T0)
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)
 #define TK_HAS_FIRMWARE_UPDATE
 #endif
 
-#if defined(CONFIG_TARGET_LOCALE_NAATT) \
-	|| defined(CONFIG_TARGET_LOCALE_NAATT_TEMP)
+#if defined(CONFIG_TARGET_LOCALE_NAATT)
 #define TK_USE_4KEY_TYPE_ATT
-#elif defined(CONFIG_MACH_LOCALE_NA) \
-	|| defined(CONFIG_MACH_U1_NA_SPR) \
-	|| defined(CONFIG_MACH_U1_NA_USCC)
+#elif defined(CONFIG_MACH_LOCALE_NA)
 #define TK_USE_4KEY_TYPE_NA
 #elif defined(CONFIG_MACH_M0) \
 	|| defined(CONFIG_MACH_C1) \
-	|| defined(CONFIG_MACH_M3)\
+	|| defined(CONFIG_MACH_C1VZW)\
+	|| defined(CONFIG_MACH_C2)\
 	|| defined(CONFIG_MACH_T0)
 #define TK_USE_2KEY_TYPE_M0
 #else
